@@ -1,0 +1,35 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "1. Install all packages",
+      "type": "shell",
+      "command": "cd server && npm install && cd ../client && npm install",
+      "problemMatcher": []
+    },
+    {
+      "label": "Backend: start",
+      "type": "shell",
+      "command": "npm run dev",
+      "options": { "cwd": "${workspaceFolder}/server" },
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": { "panel": "dedicated", "group": "app" }
+    },
+    {
+      "label": "Frontend: start",
+      "type": "shell",
+      "command": "npm run dev",
+      "options": { "cwd": "${workspaceFolder}/client" },
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": { "panel": "dedicated", "group": "app" }
+    },
+    {
+      "label": "2. Start app (backend + frontend)",
+      "dependsOn": ["Backend: start", "Frontend: start"],
+      "dependsOrder": "parallel",
+      "problemMatcher": []
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+/* CSS Modules: these class names are scoped to the Quiz component only */
+.question { border-top: 1px solid #eceef3; padding: 23px 0; }
+.question h3 { margin: 0 0 15px; line-height: 1.45; }
+.options { display: grid; gap: 10px; }
+.option {
+  display: flex; gap: 11px; align-items: flex-start; padding: 14px;
+  border: 1px solid #e1e5ec; border-radius: 12px; transition: .15s; cursor: pointer;
+}
+.option:hover { border-color: #aab2e8; background: #fafaff; }
+.option input { margin-top: 4px; }
+.correct { border-color: #58a77c; background: #effaf3; }
+.wrong { border-color: #d86b6b; background: #fff1f1; }
+.feedback { margin-top: 12px; padding: 12px 14px; background: #f6f7fb; border-radius: 10px; }
+.feedback small { display: block; margin-top: 5px; color: #707a8d; }
+.score { font-size: 25px; font-weight: 850; color: #6574d8; }
+.actions { padding-top: 10px; display: flex; align-items: center; gap: 14px; }
+.hint { color: #8a93a4; font-size: 14px; }
