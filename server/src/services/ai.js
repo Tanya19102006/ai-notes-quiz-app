@@ -18,9 +18,14 @@ Rules:
 - answer is the integer index (0-3) of the correct option
 - questions must be based only on the supplied notes; do not invent facts`;
 
-function aiError(message, status = 502) {
-  return Object.assign(new Error(message), { status, expose: true });
+// retryable: try the same model again. fallback: try the backup model (if one is set).
+function aiError(message, status = 502, extra = {}) {
+  return Object.assign(new Error(message), { status, expose: true, ...extra });
 }
+
+const MAX_ATTEMPTS = 3;
+const RETRY_DELAY_MS = () => Number(process.env.AI_RETRY_DELAY_MS ?? 1500);
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Models sometimes wrap JSON in ```json fences - strip them safely.
 export function extractJson(text) {
@@ -30,28 +35,28 @@ export function extractJson(text) {
     .trim();
   const start = cleaned.indexOf("{");
   const end = cleaned.lastIndexOf("}");
-  if (start === -1 || end === -1) throw aiError("AI did not return JSON. Please try again.");
+  if (start === -1 || end === -1) throw aiError("AI did not return JSON. Please try again.", 502, { retryable: true });
   try {
     return JSON.parse(cleaned.slice(start, end + 1));
   } catch {
-    throw aiError("AI returned broken JSON. Please try again.");
+    throw aiError("AI returned broken JSON. Please try again.", 502, { retryable: true });
   }
 }
 
 // Check the shape of the AI output before saving anything.
 export function validateStudyMaterial(parsed) {
   if (!parsed || typeof parsed.summary !== "string" || !parsed.summary.trim()) {
-    throw aiError("AI response had no summary. Please try again.");
+    throw aiError("AI response had no summary. Please try again.", 502, { retryable: true });
   }
   if (!Array.isArray(parsed.quiz) || parsed.quiz.length < 5) {
-    throw aiError("AI response had fewer than 5 questions. Please try again.");
+    throw aiError("AI response had fewer than 5 questions. Please try again.", 502, { retryable: true });
   }
 
   const quiz = parsed.quiz.slice(0, 5).map((q) => {
     const options = Array.isArray(q?.options) ? q.options.map(String) : [];
     const answer = Number(q?.answer);
     if (!q?.question || options.length !== 4 || !Number.isInteger(answer) || answer < 0 || answer > 3) {
-      throw aiError("AI returned a badly formatted question. Please try again.");
+      throw aiError("AI returned a badly formatted question. Please try again.", 502, { retryable: true });
     }
     return {
       question: String(q.question),
@@ -96,12 +101,8 @@ function demoGenerate(notes) {
   };
 }
 
-export async function generateStudyMaterial(notes) {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return { ...demoGenerate(notes), demo: true };
-
-  const model = process.env.GEMINI_MODEL || "gemini-3.1-flash-lite";
-
+// One request to one model. Throws an error that says whether a retry makes sense.
+async function callGemini(model, notes, apiKey) {
   let res;
   try {
     res = await fetch(`${GEMINI_BASE}/${model}:generateContent`, {
@@ -112,22 +113,58 @@ export async function generateStudyMaterial(notes) {
         contents: [{ role: "user", parts: [{ text: notes }] }],
         generationConfig: { responseMimeType: "application/json", temperature: 0.4 }
       }),
-      signal: AbortSignal.timeout(60000)
+      signal: AbortSignal.timeout(45000)
     });
   } catch {
-    throw aiError("Could not reach the AI service. Check your internet and try again.");
+    throw aiError("Could not reach the AI service. Check your internet and try again.", 502, { retryable: true, fallback: true });
   }
 
   const data = await res.json().catch(() => ({}));
 
   if (!res.ok) {
-    if (res.status === 429) throw aiError("AI rate limit reached. Wait a minute and try again.", 429);
-    if (res.status === 400 || res.status === 403) {
-      throw aiError("AI request was rejected. Check GEMINI_API_KEY and GEMINI_MODEL in server/.env.");
+    if (res.status === 429) {
+      throw aiError("AI rate limit reached. Wait a minute and try again.", 429, { fallback: true });
     }
-    throw aiError(data?.error?.message || "AI service error. Please try again.");
+    if (res.status === 400 || res.status === 401 || res.status === 403 || res.status === 404) {
+      throw aiError("AI request was rejected. Check GEMINI_API_KEY and GEMINI_MODEL in the server settings.");
+    }
+    // 500 / 502 / 503 / 504: the model is overloaded or having a short problem
+    throw aiError("The AI is busy right now. Please wait a minute and try again.", 503, { retryable: true, fallback: true });
   }
 
-  const text = (data.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join("");
-  return { ...validateStudyMaterial(extractJson(text)), demo: false };
+  return (data.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join("");
+}
+
+// Tries one model up to MAX_ATTEMPTS times when the problem is temporary.
+async function askModel(model, notes, apiKey) {
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const text = await callGemini(model, notes, apiKey);
+      return validateStudyMaterial(extractJson(text));
+    } catch (err) {
+      if (!err.retryable || attempt === MAX_ATTEMPTS) throw err;
+      await sleep(RETRY_DELAY_MS() * attempt);
+    }
+  }
+}
+
+export async function generateStudyMaterial(notes) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return { ...demoGenerate(notes), demo: true };
+
+  // main model first; an optional backup model (GEMINI_FALLBACK_MODEL) if the main one is busy
+  const models = [
+    ...new Set([process.env.GEMINI_MODEL || "gemini-3.1-flash-lite", process.env.GEMINI_FALLBACK_MODEL].filter(Boolean))
+  ];
+
+  let lastError;
+  for (const model of models) {
+    try {
+      return { ...(await askModel(model, notes, apiKey)), demo: false };
+    } catch (err) {
+      lastError = err;
+      if (!err.fallback && !err.retryable) throw err; // e.g. wrong key: a backup model will not help
+    }
+  }
+  throw lastError;
 }

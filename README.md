@@ -70,6 +70,7 @@ MONGODB_URI=mongodb://127.0.0.1:27017/ai_notes_quiz   # or your Atlas connection
 JWT_SECRET=any_long_random_text_here
 GEMINI_API_KEY=paste_your_key_here
 GEMINI_MODEL=gemini-3.1-flash-lite
+GEMINI_FALLBACK_MODEL=        # optional backup model, used when the main one is overloaded
 ```
 Then run:
 ```bash
@@ -135,3 +136,4 @@ Open http://localhost:4000, http://localhost:4000/health and http://localhost:40
 - **CORS error:** `CLIENT_URL` in `server/.env` must match the frontend URL exactly.
 - **MongoDB connection failed:** start local MongoDB, or use an Atlas connection string (allow your IP in Atlas Network Access).
 - **429 from AI:** free-tier rate limit; wait a minute.
+- **"The AI is busy right now":** Google's model is overloaded for a moment. The server already retries 3 times (and tries `GEMINI_FALLBACK_MODEL` if set); wait a minute and click Generate again.
